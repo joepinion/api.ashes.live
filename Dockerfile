@@ -1,4 +1,4 @@
-FROM python:3.11 as development_build
+FROM python:3.13 as development_build
 
 # This is only available at build, and is a required variable
 ARG ENV
@@ -52,7 +52,7 @@ COPY ./poetry.lock ./pyproject.toml /code/
 
 # Project initialization:
 RUN echo "$ENV" \
-  && poetry install --no-root --no-interaction --no-ansi \
+  && poetry lock && poetry install --no-root --no-interaction --no-ansi \
     $(if [ "$ENV" = 'production' ]; then echo '--only main'; fi) \
   # Cleaning poetry installation's cache for production:
   && if [ "$ENV" = 'production' ]; then rm -rf "$POETRY_CACHE_DIR"; fi
