@@ -1,1 +1,1 @@
-web: uvicorn api:app --workers 4 --port 80
+web: uvicorn api:app --workers 4 --port $PORT
