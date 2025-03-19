@@ -113,6 +113,12 @@ class CardMinimalOut(BaseModel):
     stub: str
 
 
+class CardConjurationOut(BaseModel):
+    name: str
+    type: str
+    conjurations: list[CardMinimalOut] = None
+    copies: int = None
+
 class CardOut(BaseModel):
     """The standard JSON output for a card.
 
@@ -207,6 +213,11 @@ class CardListingOut(PaginatedResultsBase):
 
     results: list[CardOut] = []
 
+
+class CardListingConjurationOut(PaginatedResultsBase):
+    """Filtered listing of cards"""
+
+    results: list[CardConjurationOut] = []
 
 class CardType(str, Enum):
     """The various card types in Ashes"""

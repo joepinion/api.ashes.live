@@ -20,6 +20,7 @@ from api.schemas.cards import (
     CardDiceCosts,
     CardIn,
     CardListingOut,
+    CardListingConjurationOut,
     CardOut,
     CardsFilterDiceLogic,
     CardsFilterListingMode,
@@ -258,6 +259,51 @@ def list_cards(
     else:
         # Defaults to ordering by name
         query = query.order_by(getattr(Card.name, order)())
+    return paginated_results_for_query(
+        query=query,
+        paging=paging,
+        url=str(request.url),
+    )
+
+
+@router.get(
+    "/cards-conjurations",
+    response_model=CardListingConjurationOut,
+    response_model_exclude_unset=True,
+)
+def list_cards(
+    request: Request,
+    # Standard dependencies
+    paging: PaginationOptions = Depends(paging_options),
+    current_user: "UserType" = Depends(get_current_user),
+    session: db.Session = Depends(get_session),
+):
+    """Get a paginated listing of cards with optional filters.
+
+    ## Available filters
+
+    * `q`: text search
+    * `show_legacy` (default: false): if true, legacy 1.0 card data will be returned
+    * `mode` (default: `listing`): if `deckbuilder`, Phoenixborn, uniques, and conjurations will not be included
+    * `types`: list of types to include in filtered cards
+    * `show_summons` (default: false): if true, will only show cards whose name starts with "Summon "
+    * `releases` (default: `all`): if `mine` will show only releases owned by the current user
+    * `r`: list of release stubs; will only show cards belonging to releases in this list (**Note:** does nothing if `releases` is not `all`!)
+    * `dice`: list of dice costs that cards in the listing must use
+    * `dice_logic` (default: `only`): `only` mean the cards will only use one or more of the selected colors; `any` is
+      deprecated, but is a synonym for `only`; `includes` mean the cards will use at least one of the selected colors
+      (but could require colors that are not selected); and `all` is deprecated but will only show cards that require
+      all of the chosen colors
+    * `include_uniques_for`: if set to a Phoenixborn name, listing will also include uniques belonging to the given Phoenixborn
+      (only applicable to deckbuilder mode)
+    """
+    # First build our base query
+    query = (
+        session.query(Card.json).join(Card.release).filter(Release.is_public.is_(True))
+    )
+    paging.limit = 100000
+    # Don't include legacy cards
+    query = query.filter(Card.is_legacy.is_(False))
     return paginated_results_for_query(
         query=query,
         paging=paging,
