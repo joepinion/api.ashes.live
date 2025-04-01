@@ -30,7 +30,7 @@ class BannedUserException(APIException):
     """Default exception when a banned user tries to access something"""
 
     status_code = status.HTTP_403_FORBIDDEN
-    detail = "Your account has been banned. Please contact Skaak#0007 on Discord if you wish to appeal."
+    detail = "Your account has been banned."
 
 
 class NoUserAccessException(APIException):

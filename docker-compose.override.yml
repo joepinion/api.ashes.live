@@ -14,7 +14,7 @@ services:
         env_file: .env
         ports:
             # Adding 127.0.0.1 ensures that we only listen to local requests
-            - '127.0.0.1:5432:5432'
+            - '127.0.0.1:5439:5432'
         volumes:
             - pgdata:/var/lib/postgresql/data
 
