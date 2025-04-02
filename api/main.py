@@ -15,8 +15,7 @@ logging.basicConfig(level=logging.WARNING if not settings.debug else logging.DEB
 app = FastAPI(
     title="Ashes.live API",
     description=(
-        "Backend API for Ashes.live, a fan-developed deckbuilder "
-        "and community website for Ashes Reborn."
+        "Backend API for Ashes Deckbuilder."
     ),
     version=__version__,
     docs_url="/",
