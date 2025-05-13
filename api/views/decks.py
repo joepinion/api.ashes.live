@@ -88,6 +88,7 @@ def list_published_decks(
         cards=filters.card,
         players=filters.player,
         show_preconstructed=filters.show_preconstructed,
+        show_unrestricted=filters.show_unrestricted,
     )
     return paginate_deck_listing(query, session, request, paging)
 
@@ -123,6 +124,7 @@ def list_my_decks(
         session,
         show_legacy=filters.show_legacy,
         show_red_rains=filters.show_red_rains,
+        show_unrestricted=filters.show_unrestricted,
         is_public=False,
         order=order,
         q=filters.q,
@@ -305,7 +307,6 @@ def get_deck(
                 ),
             }
         )
-
     deck_details = {
         "releases": release_data,
         "deck": deck_dict,
@@ -413,6 +414,7 @@ def save_deck(
             effect_costs=data.effect_costs,
             tutor_map=data.tutor_map,
             is_red_rains=data.is_red_rains,
+            is_unrestricted= data.is_unrestricted
         )
     except PhoenixbornInDeck:
         raise APIException(
@@ -480,7 +482,7 @@ def create_snapshot(
     if not data:
         data = SnapshotIn()
     # Ensure that public snapshots are legal decks
-    if data.is_public:
+    if data.is_public and not deck.is_unrestricted:
         total_cards = 0
         total_dice = 0
         for deck_card in deck.cards:
@@ -773,6 +775,7 @@ def clone_deck(
         user_id=current_user.id,
         phoenixborn_id=deck.phoenixborn_id,
         is_red_rains=red_rains,
+        is_unrestricted=deck.is_unrestricted,
     )
     session.add(cloned_deck)
     session.commit()

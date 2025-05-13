@@ -67,6 +67,7 @@ def create_or_update_deck(
     effect_costs: list[str] = None,
     tutor_map: dict[str, str] = None,
     is_red_rains: bool = False,
+    is_unrestricted: bool = False,
 ) -> "Deck":
     """Creates or updates a deck in place."""
     now = datetime.utcnow()
@@ -83,6 +84,7 @@ def create_or_update_deck(
         deck.title = title
         deck.description = description
         deck.phoenixborn_id = phoenixborn.id
+        deck.is_unrestricted = is_unrestricted
         deck.modified = now
         if deck.is_red_rains != is_red_rains:
             if (
@@ -107,6 +109,7 @@ def create_or_update_deck(
             is_snapshot=False,
             is_public=False,
             is_red_rains=is_red_rains,
+            is_unrestricted=is_unrestricted,
         )
 
     # Update the dice listing
@@ -151,19 +154,20 @@ def create_or_update_deck(
         #  back to zero to ensure this is something with a count
         count = card_stub_counts.get(card.stub, 0)
         # Make sure our count can't exceed 3
-        count = count if count <= 3 else 3
+        count = count if count <= 100 else 100
         # Skip it if it's not part of the deck
         if count <= 0:
             continue
-        if card.card_type == CardType.phoenixborn.value:
-            raise PhoenixbornInDeck()
-        if card.phoenixborn and card.phoenixborn != phoenixborn.name:
-            raise BadPhoenixbornUnique(card)
-        if card.card_type in (
-            CardType.conjuration.value,
-            CardType.conjured_alteration_spell.value,
-        ):
-            raise ConjurationInDeck(card)
+        if not is_unrestricted:
+            if card.card_type == CardType.phoenixborn.value:
+                raise PhoenixbornInDeck()
+            if card.phoenixborn and card.phoenixborn != phoenixborn.name:
+                raise BadPhoenixbornUnique(card)
+            if card.card_type in (
+                CardType.conjuration.value,
+                CardType.conjured_alteration_spell.value,
+            ):
+                raise ConjurationInDeck(card)
         deck_cards.append(DeckCard(card_id=card.id, count=count))
     deck.cards = deck_cards
 
@@ -236,6 +240,7 @@ def create_snapshot_for_deck(
         is_public=False,
         is_snapshot=True,
         is_red_rains=deck.is_red_rains,
+        is_unrestricted=deck.is_unrestricted,
         is_preconstructed=bool(preconstructed_release_id),
         preconstructed_release=preconstructed_release_id,
         source_id=deck.id,
@@ -299,6 +304,7 @@ def create_snapshot_for_deck(
 def get_decks_query(
     session: db.Session,
     show_legacy=False,
+    show_unrestricted=False,
     show_red_rains=False,
     is_public=False,
     order: PaginationOrderOptions = PaginationOrderOptions.desc,
@@ -313,6 +319,7 @@ def get_decks_query(
         Deck.is_legacy.is_(show_legacy),
         Deck.is_deleted.is_(False),
         Deck.is_red_rains.is_(show_red_rains),
+        Deck.is_unrestricted.is_(show_unrestricted),
     )
     if show_preconstructed:
         query = query.filter(Deck.is_preconstructed.is_(True))
@@ -579,6 +586,7 @@ def deck_to_dict(
     deck_dict["is_public"] = deck.is_public
     deck_dict["is_snapshot"] = deck.is_snapshot
     deck_dict["is_red_rains"] = deck.is_red_rains
+    deck_dict["is_unrestricted"] = deck.is_unrestricted
     if include_comment_entity_id:
         # This is an implicit SQL lookup, but it's going to require a lookup either way, so meh
         deck_dict["comments_entity_id"] = (

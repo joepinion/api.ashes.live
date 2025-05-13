@@ -31,6 +31,7 @@ class Deck(db.AlchemyBase):
     is_preconstructed = db.Column(db.Boolean, nullable=False, default=False, index=True)
     is_red_rains = db.Column(db.Boolean, nullable=False, default=False, index=True)
     is_legacy = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    is_unrestricted = db.Column(db.Boolean, nullable=False, default=False, index=True)
     is_deleted = db.Column(db.Boolean, nullable=False, default=False, index=True)
     # This is not a ForeignKey because it's usually null
     preconstructed_release = db.Column(db.Integer, index=True)

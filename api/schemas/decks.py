@@ -18,11 +18,13 @@ class DeckFiltersMine:
         card: list[str] | None = Query(None),
         show_legacy: bool = False,
         show_red_rains: bool = False,
+        show_unrestricted: bool = False
     ):
         self.q = q
         self.phoenixborn = phoenixborn
         self.card = card
         self.show_legacy = show_legacy
+        self.show_unrestricted = show_unrestricted
         self.show_red_rains = show_red_rains
 
 
@@ -35,6 +37,7 @@ class DeckFilters:
         phoenixborn: list[str] | None = Query(None),
         card: list[str] | None = Query(None),
         show_legacy: bool = False,
+        show_unrestricted: bool = False,
         show_preconstructed: bool = False,
         show_red_rains: bool = False,
         player: list[str] | None = Query(None),
@@ -46,6 +49,7 @@ class DeckFilters:
         self.show_red_rains = show_red_rains
         self.show_preconstructed = show_preconstructed
         self.player = player
+        self.show_unrestricted = show_unrestricted
 
 
 class PhoenixbornCardOut(BaseModel):
@@ -121,9 +125,11 @@ class DeckOut(BaseModel):
     is_public: bool = None
     is_snapshot: bool = None
     is_legacy: bool = None
+    is_unrestricted: bool= None
     is_red_rains: bool = None
     ashes_500_score: int = None
     ashes_500_revision_id: int = None
+    is_unrestricted: bool= None
 
     class Config:
         orm_mode = True
@@ -200,7 +206,7 @@ class DeckCardIn(BaseModel):
         ...,
         description="The quantity of this card to include in the deck.",
         ge=1,
-        le=3,
+        le=100,
     )
     stub: str
 
@@ -233,6 +239,10 @@ class DeckIn(BaseModel):
         description="An object with tutor card stubs in the First Five as keys, and the tutored card stubs as values.",
     )
     is_red_rains: bool = Field(
+        False,
+        description="May only be changed when creating a new deck or for a deck that has no public snapshots.",
+    )
+    is_unrestricted: bool = Field(
         False,
         description="May only be changed when creating a new deck or for a deck that has no public snapshots.",
     )
