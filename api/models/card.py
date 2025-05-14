@@ -25,6 +25,7 @@ CARD_TYPE_ORDER = [
     "Reaction Spell",
     "Conjuration",
     "Conjured Alteration Spell",
+    "Reference",
 ]
 
 

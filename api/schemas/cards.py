@@ -47,6 +47,7 @@ class CardsFilterType(str, Enum):
     ready_spell = "ready_spell"
     conjuration = "conjuration"
     conjured_alteration_spell = "conjured_alteration_spell"
+    reference = "reference"
 
 
 class CardsFilterRelease(str, Enum):
@@ -230,6 +231,7 @@ class CardType(str, Enum):
     phoenixborn = "Phoenixborn"
     conjuration = "Conjuration"
     conjured_alteration_spell = "Conjured Alteration Spell"
+    reference = "Reference"
 
 
 class CardPlacement(str, Enum):
