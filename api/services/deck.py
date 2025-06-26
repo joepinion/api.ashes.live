@@ -490,6 +490,7 @@ def generate_deck_dict(
         "conjurations": sorted(conjuration_output, key=itemgetter("name")),
         "is_public": deck.is_public,
         "is_snapshot": deck.is_snapshot,
+        "is_unrestricted": deck.is_unrestricted,
     }
     if include_share_uuid:
         deck_dict["direct_share_uuid"] = deck.direct_share_uuid
