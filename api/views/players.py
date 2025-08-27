@@ -1,9 +1,9 @@
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import UUID4
-from pydantic.error_wrappers import ErrorWrapper
 
 from api import db
 from api.depends import (
@@ -19,6 +19,7 @@ from api.models import Invite, User
 from api.schemas import DetailResponse
 from api.schemas import user as schema
 from api.schemas.auth import AuthTokenOut
+from api.schemas.user import UserExportToken
 from api.services.user import access_token_for_user, create_user, get_invite_for_email
 from api.utils.auth import generate_password_hash, verify_password
 from api.utils.email import send_message
@@ -57,7 +58,8 @@ def request_invite(
     # Email the user
     if not send_message(
         recipient=invitation.email,
-        template_id=settings.sendgrid_invite_template,
+        template_name="invite",
+        subject=f"Create your {settings.site_name} account!",
         data={
             "invite_token": str(invitation.uuid),
             "email": invitation.email,
@@ -125,7 +127,7 @@ def update_my_data(
     session: db.Session = Depends(get_session),
 ):
     """Update user information for the logged-in user."""
-    update_dict = updates.dict(exclude_unset=True)
+    update_dict = updates.model_dump(exclude_unset=True)
     for key, value in update_dict.items():
         setattr(current_user, key, value)
     session.commit()
@@ -145,16 +147,37 @@ def update_my_password(
         # We need to fake a normal validation error, because we can't really do this in the schema
         #  (need access to the database session for the password verification)
         raise RequestValidationError(
-            errors=(
-                ErrorWrapper(
-                    exc=ValueError("Current password is invalid."),
-                    loc="current_password",
-                ),
-            )
+            errors=(ValueError("Current password is invalid."),)
         )
     current_user.password = generate_password_hash(updates.password)
     session.commit()
     return {"detail": "Your password has been updated!"}
+
+
+@router.get(
+    "/players/me/export",
+    response_model=UserExportToken,
+    responses={
+        400: {
+            "model": DetailResponse,
+            "description": "Deck exports are disallowed for this site.",
+        },
+        **AUTH_RESPONSES,
+    },
+)
+def get_deck_export_token(
+    current_user: "User" = Depends(login_required),
+    session: db.Session = Depends(get_session),
+):
+    """Generates (if necessary) and returns the UUID that allows the current user to export their decks to other
+    instances. Mainly intended for migrating decks into the official Plaid Hat AshesDB.
+    """
+    if not settings.allow_exports:
+        raise APIException(detail="Deck exports are disallowed for this site.")
+    if current_user.deck_export_uuid is None:
+        current_user.deck_export_uuid = uuid.uuid4()
+        session.commit()
+    return {"export_token": current_user.deck_export_uuid}
 
 
 @router.get(
@@ -198,7 +221,7 @@ def moderate_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You cannot moderate yourself.",
         )
-    update_dict = updates.dict(exclude_unset=True)
+    update_dict = updates.model_dump(exclude_unset=True)
     if "is_banned" in update_dict:
         user.is_banned = update_dict["is_banned"]
         user.moderation_notes = update_dict["moderation_notes"]

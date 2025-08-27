@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
@@ -27,12 +29,21 @@ from api.schemas.cards import (
     CardsFilterRelease,
     CardsFilterType,
     CardsSortingMode,
+    CardUpdate,
 )
 from api.schemas.pagination import PaginationOptions, PaginationOrderOptions
-from api.services.card import MissingConjurations
+from api.services.card import (
+    MissingConjurations,
+    compose_card_search_text,
+    cost_to_weight,
+)
 from api.services.card import create_card as create_card_service
-from api.services.card import gather_conjurations, gather_root_summons
-from api.utils.helpers import powerset, stubify, to_prefixed_tsquery
+from api.services.card import (
+    gather_conjurations,
+    gather_root_summons,
+    parse_costs_to_mapping,
+)
+from api.utils.helpers import powerset, str_or_int, stubify, to_prefixed_tsquery
 from api.utils.pagination import paginated_results_for_query
 
 router = APIRouter()
@@ -195,9 +206,12 @@ def list_cards(
                 dice_filters.append(
                     db.and_(
                         Card.dice_flags == sum(subset),
-                        Card.alt_dice_flags.op("&")(missing_values) == missing_values
-                        if missing_values
-                        else Card.alt_dice_flags == missing_values,
+                        (
+                            Card.alt_dice_flags.op("&")(missing_values)
+                            == missing_values
+                            if missing_values
+                            else Card.alt_dice_flags == missing_values
+                        ),
                     )
                 )
         elif dice_set != {"basic"}:
@@ -384,23 +398,163 @@ def get_card_fuzzy_lookup(
 
 @router.get(
     "/cards/{stub}",
-    response_model=CardOut,
+    response_model=CardOut | CardUpdate,
     response_model_exclude_unset=True,
     responses={404: {"model": DetailResponse}},
 )
 def get_card(
-    stub: str, show_legacy: bool = False, session: db.Session = Depends(get_session)
+    stub: str,
+    show_legacy: bool = False,
+    for_update: bool = False,
+    session: db.Session = Depends(get_session),
+    user: UserType = Depends(get_current_user),
 ):
-    """Returns the most basic information about this card."""
-    query = session.query(Card.json).filter(Card.stub == stub)
+    """Returns the most basic information about this card.
+
+    `for_update=true` will only work for admins.
+    """
+    query = session.query(Card).filter(Card.stub == stub)
     if show_legacy:
         query = query.filter(Card.is_legacy.is_(True))
     else:
         query = query.filter(Card.is_legacy.is_(False))
-    card_json = query.join(Card.release).filter(Release.is_public == True).scalar()
-    if not card_json:
+    if user.is_anonymous() or not user.is_admin:
+        query = query.join(Card.release).filter(Release.is_public == True)
+    card = query.scalar()
+    if not card:
         raise NotFoundException(detail="Card not found.")
-    return card_json
+    card_json = deepcopy(card.json)
+    if for_update and not user.is_anonymous() and user.is_admin:
+        # Default to non-errata changes, as these will be most common
+        card_json["is_errata"] = False
+        # Check if this card has "search keywords" embedded in its search text
+        search_keywords = card.search_keywords
+        if search_keywords:
+            card_json["search_keywords"] = search_keywords
+        return CardUpdate.model_validate(card_json)
+    return CardOut.model_validate(card_json)
+
+
+@router.patch(
+    "/cards/{stub}",
+    response_model=CardOut,
+    response_model_exclude_unset=True,
+    responses={
+        404: {"model": DetailResponse},
+        400: {
+            "model": DetailResponse,
+            "description": "Card update failed.",
+        },
+        **AUTH_RESPONSES,
+    },
+)
+def update_card(
+    stub: str,
+    data: CardUpdate,
+    session: db.Session = Depends(get_session),
+    _=Depends(admin_required),
+):
+    """Admin-only. Update an existing card in the database.
+
+    This operates in two modes:
+
+    1. If `"is_errata"` is `true`, the patch will be applied as errata (version number
+       will increment, causing existing comments to be marked as applying to an older
+       version).
+    2. Otherwise, it will serve as a typo fix.
+
+    For best results, get the card update details first by calling GET `/cards/{stub}`
+    with `for_update=true`.
+
+    **Please note:** this endpoint does *not* try to calculate included magic types and
+    similar from costs, unlike the creation endpoint! If you modify a cost, make sure to
+    also modify all related mappings that track the number and type of costs used.
+
+    This endpoint cannot be used to update card stubs. Currently to do that you will
+    need to modify the database directly (and remember that the stub is stored in two
+    places! The database column, and within the card JSON).
+    """
+    query = session.query(Card).filter(Card.stub == stub, Card.is_legacy.is_(False))
+    card = query.scalar()
+    if not card:
+        raise NotFoundException(detail="Card not found.")
+    if data.is_errata:
+        card.version += 1
+    json_data = deepcopy(card.json)
+    # Update name, text, and search keywords since they all inform the search text
+    name_updated = False
+    if data.name and data.name != card.name:
+        card.name = data.name
+        json_data["name"] = data.name
+        card.stub = stubify(data.name)
+        json_data["stub"] = card.stub
+        name_updated = True
+    search_keywords = card.search_keywords
+    search_keywords_updated = False
+    if data.search_keywords is not None and data.search_keywords != search_keywords:
+        search_keywords = data.search_keywords
+        search_keywords_updated = True
+    text_updated = False
+    if data.text is not None and data.text != card.json.get("text"):
+        if data.text:
+            json_data["text"] = data.text
+        elif "text" in json_data:
+            del json_data["text"]
+        text_updated = True
+    if name_updated or search_keywords_updated or text_updated:
+        card.search_text = compose_card_search_text(
+            card, json_data.get("text"), search_keywords
+        )
+    # Update copies, which is also stored in the root object
+    if data.copies is not None and data.copies != card.copies:
+        card.copies = data.copies if data.copies else None
+        if data.copies:
+            json_data["copies"] = data.copies
+        elif "copies" in json_data:
+            del json_data["copies"]
+    # Update cost and weight; does not allow deleting costs, but you can change them
+    if data.cost is not None and data.cost:
+        weight, json_cost_list = cost_to_weight(data.cost)
+        if weight != card.cost_weight:
+            card.cost_weight = weight
+        if json_cost_list != json_data.get("cost"):
+            json_data["cost"] = json_cost_list
+            json_data["magicCost"] = parse_costs_to_mapping(json_cost_list)
+    # Update dice flags, if those properties were adjusted
+    if data.dice is not None and data.dice != json_data.get("dice"):
+        if data.dice:
+            card.dice_flags = Card.dice_to_flags(data.dice)
+            json_data["dice"] = data.dice
+        elif "dice" in json_data:
+            card.dice_flags = 0
+            del json_data["dice"]
+    if data.altDice is not None:
+        if data.altDice:
+            card.alt_dice_flags = Card.dice_to_flags(data.altDice)
+            json_data["altDice"] = data.altDice
+        elif "altDice" in json_data:
+            card.alt_dice_flags = 0
+            del json_data["altDice"]
+    # Update JSON-only data that doesn't need parsing
+    for prop in ("magicCost", "effectMagicCost", "effectRepeats", "chained"):
+        update_value = getattr(data, prop)
+        if update_value is not None and update_value != json_data.get(prop):
+            if update_value or update_value == 0:
+                json_data[prop] = update_value
+            elif prop in json_data:
+                del json_data[prop]
+    # Now that we've covered everything that's in the root Card, update the str or int values that are JSON-only
+    for prop in ("attack", "life", "recover", "battlefield", "spellboard"):
+        update_value = getattr(data, prop)
+        if update_value is not None and update_value != json_data.get(prop):
+            if update_value or update_value == 0:
+                json_data[prop] = str_or_int(update_value)
+            elif prop in json_data:
+                del json_data[prop]
+    # And finally perform the update!
+    card.json = json_data
+    session.commit()
+    return card.json
 
 
 def _card_to_minimal_card(card: Card) -> dict:
@@ -456,16 +610,16 @@ def get_card_details(
         else:
             phoenixborn = card
         phoenixborn_conjurations = gather_conjurations(phoenixborn)
-        phoenixborn_unique = (
+        phoenixborn_uniques = (
             session.query(Card)
             .filter(
                 Card.phoenixborn == phoenixborn.name,
                 Card.card_type.notin_(("Conjuration", "Conjured Alteration Spell")),
                 Card.is_legacy.is_(show_legacy),
             )
-            .first()
+            .order_by(Card.id.asc())
+            .all()
         )
-        phoenixborn_unique_conjurations = gather_conjurations(phoenixborn_unique)
         related_cards["phoenixborn"] = _card_to_minimal_card(phoenixborn)
         if phoenixborn_conjurations:
             related_cards["phoenixborn_conjurations"] = [
@@ -473,16 +627,19 @@ def get_card_details(
             ]
             if card.id in [x.id for x in phoenixborn_conjurations]:
                 summons = [phoenixborn]
-        if phoenixborn_unique:
-            related_cards["phoenixborn_unique"] = _card_to_minimal_card(
+        for idx, phoenixborn_unique in enumerate(phoenixborn_uniques):
+            prop_prefix = "phoenixborn_unique"
+            if idx > 0:
+                prop_prefix += f"_{idx + 1}"
+            related_cards[prop_prefix] = _card_to_minimal_card(phoenixborn_unique)
+            if phoenixborn_unique_conjurations := gather_conjurations(
                 phoenixborn_unique
-            )
-        if phoenixborn_unique_conjurations:
-            related_cards["phoenixborn_unique_conjurations"] = [
-                _card_to_minimal_card(x) for x in phoenixborn_unique_conjurations
-            ]
-            if card.id in [x.id for x in phoenixborn_unique_conjurations]:
-                summons = [phoenixborn_unique]
+            ):
+                related_cards[f"{prop_prefix}_conjurations"] = [
+                    _card_to_minimal_card(x) for x in phoenixborn_unique_conjurations
+                ]
+                if card.id in [x.id for x in phoenixborn_unique_conjurations]:
+                    summons = [phoenixborn_unique]
     else:
         # Check to see if we have any conjurations that we need to map to this card
         # We want to look up things in a different order depending on whether we're looking at
@@ -591,12 +748,14 @@ def get_card_details(
     return {
         "card": card.json,
         "usage": counts,
-        "preconstructed_deck": {
-            "id": preconstructed.source_id,
-            "title": preconstructed.title,
-        }
-        if preconstructed
-        else None,
+        "preconstructed_deck": (
+            {
+                "id": preconstructed.source_id,
+                "title": preconstructed.title,
+            }
+            if preconstructed
+            else None
+        ),
         "related_cards": related_cards,
         "entity_id": card.entity_id,
         "last_seen_entity_id": last_seen_entity_id,

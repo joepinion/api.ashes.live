@@ -8,6 +8,7 @@
         response = client.get("/my-endpoint/")
         assert response.status_code == status.HTTP_200_OK
 """
+
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from fastapi.testclient import TestClient
@@ -28,6 +29,8 @@ from . import utils
 def testing_environment(monkeypatch):
     # Ensure we don't have any SendGrid API key stored for a real SendGrid account
     utils.monkeypatch_settings(monkeypatch, {"sendgrid_api_key": None})
+    # Ensure we don't have any SMTP host key stored so the tests won't accidentally send emails
+    utils.monkeypatch_settings(monkeypatch, {"smtp_host": None})
 
 
 @pytest.fixture(scope="session")
