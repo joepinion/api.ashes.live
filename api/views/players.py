@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import UUID4
+from sqlalchemy import select
 
 from api import db
 from api.depends import (
@@ -22,7 +23,7 @@ from api.schemas.auth import AuthTokenOut
 from api.schemas.user import UserExportToken
 from api.services.user import access_token_for_user, create_user, get_invite_for_email
 from api.utils.auth import generate_password_hash, verify_password
-from api.utils.email import send_message
+from api.utils.email import sanitize_email, send_message
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -48,8 +49,9 @@ def request_invite(
 
     Will fail if requested by an authenticated user.
     """
-    email = data.email.lower()
-    user = session.query(User).filter(User.email == email).first()
+    email = sanitize_email(data.email)
+    stmt = select(User).where(User.email == email)
+    user = session.execute(stmt).scalar_one_or_none()
     if user:
         raise APIException(
             detail="This email is already in use.",
@@ -91,7 +93,8 @@ def create_player(
 
     Will fail if requested by an authenticated user.
     """
-    invite = session.query(Invite).filter(Invite.uuid == token).first()
+    stmt = select(Invite).where(Invite.uuid == token)
+    invite = session.execute(stmt).scalar_one_or_none()
     if invite is None:
         raise NotFoundException(detail="Token not found. Please request a new invite.")
     user = create_user(
@@ -187,11 +190,8 @@ def get_deck_export_token(
 )
 def get_user_data(badge: str, session: db.Session = Depends(get_session)):
     """Return public user information for any user."""
-    user = (
-        session.query(User)
-        .filter(User.badge == badge, User.is_banned.is_(False))
-        .first()
-    )
+    stmt = select(User).where(User.badge == badge, User.is_banned.is_(False))
+    user = session.execute(stmt).scalar_one_or_none()
     if not user:
         raise NotFoundException(detail="User not found.")
     return user
@@ -213,7 +213,8 @@ def moderate_user(
     current_user: "User" = Depends(admin_required),
 ):
     """**Admin only.** Ban a user; or moderate their username or description."""
-    user: User = session.query(User).filter(User.badge == badge).first()
+    stmt = select(User).where(User.badge == badge)
+    user: User = session.execute(stmt).scalar_one_or_none()
     if not user:
         raise NotFoundException(detail="User not found.")
     if user.id == current_user.id:

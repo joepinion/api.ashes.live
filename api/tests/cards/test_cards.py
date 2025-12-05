@@ -1,11 +1,12 @@
 from fastapi import status
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from api import db
 from api.models.release import Release, UserRelease
 from api.services.card import create_card
 
-from ..utils import create_user_token
+from ..utils import create_user_token, monkeypatch_settings
 
 
 def names_from_results(response):
@@ -49,8 +50,8 @@ def test_card_filters_card_type(client: TestClient, session: db.Session):
         "/v2/cards", params={"types": ["alteration_spell", "ready_spell"]}
     )
     assert response.status_code == status.HTTP_200_OK, response.json()
-    # There are three cards: two ready spells, and one alteration spell
-    assert len(response.json()["results"]) == 3, names_from_results(response)
+    # There are three cards: two ready spells, one alteration spell, and one conjured alteration spell
+    assert len(response.json()["results"]) == 4, names_from_results(response)
     # Filtering by "conjurations" shortcut works
     response = client.get("/v2/cards", params={"types": "conjurations"})
     assert response.status_code == status.HTTP_200_OK, response.json()
@@ -209,6 +210,19 @@ def test_pagination_paging(client: TestClient, session: db.Session):
     assert data["next"] is not None
 
 
+def test_pagination_exceed_limit(client: TestClient, session: db.Session, monkeypatch):
+    """Exceeding the max pagination limit results in getting the max limit back"""
+    monkeypatch_settings(
+        monkeypatch, {"pagination_max_limit": 4, "pagination_default_limit": 2}
+    )
+    response = client.get("/v2/cards", params={"limit": 5})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 10
+    assert len(data["results"]) == 4
+    assert data["next"] is not None
+
+
 def test_pagination_negative_offsets(client: TestClient, session: db.Session):
     """A number that would result in a negative offset must result in no offset"""
     # Verify that previous links work properly with arbitrary offsets that would make them negative
@@ -222,7 +236,9 @@ def test_release_filtration(client: TestClient, session: db.Session):
     """Filtering cards by owned releases works properly."""
     # Create our user, and setup their collection
     user, token = create_user_token(session)
-    master_set = session.query(Release).filter(Release.stub == "master-set").first()
+    master_set = session.execute(
+        select(Release).where(Release.stub == "master-set").limit(1)
+    ).scalar()
     user_release = UserRelease(user_id=user.id, release_id=master_set.id)
     session.add(user_release)
     session.commit()

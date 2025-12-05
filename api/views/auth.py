@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import UUID4
+from sqlalchemy import delete, select
 
 from api import db
 from api.depends import (
@@ -28,7 +29,7 @@ from api.schemas.user import UserEmailIn, UserSetPasswordIn
 from api.services.user import access_token_for_user
 from api.utils.auth import generate_password_hash, verify_password
 from api.utils.dates import utcnow
-from api.utils.email import send_message
+from api.utils.email import sanitize_email, send_message
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,9 @@ def log_in(
     If you pass in `token:longterm` in the scopes, then you will be issued a long-lived token
     (defaults to one year before expiring).
     """
-    email = form_data.username.lower()
-    user = session.query(User).filter(User.email == email).first()
+    email = sanitize_email(form_data.username)
+    stmt = select(User).where(User.email == email)
+    user = session.execute(stmt).scalar_one_or_none()
     if not user or not verify_password(form_data.password, user.password):
         raise CredentialsException(
             detail="Incorrect username or password",
@@ -82,9 +84,10 @@ def log_out(
     long-lived.
     """
     # Do some quick clean-up to keep our table lean and mean; deletes any tokens that expired more than 24 hours ago
-    session.query(UserRevokedToken).filter(
+    delete_stmt = delete(UserRevokedToken).where(
         UserRevokedToken.expires < utcnow() - dt.timedelta(days=1)
-    ).delete(synchronize_session=False)
+    )
+    session.execute(delete_stmt)
     session.commit()
     # Then add our newly revoked token
     expires_at = dt.datetime.fromtimestamp(jwt_payload["exp"], tz=dt.timezone.utc)
@@ -113,8 +116,9 @@ def request_password_reset(
     _=Depends(anonymous_required),
 ):
     """Request a reset password link for the given email."""
-    email = data.email.lower()
-    user: User = session.query(User).filter(User.email == email).first()
+    email = sanitize_email(data.email)
+    stmt = select(User).where(User.email == email)
+    user: User = session.execute(stmt).scalar_one_or_none()
     if not user:
         raise NotFoundException(detail="No account found for email.")
     if user.is_banned:
@@ -150,7 +154,8 @@ def reset_password(
     _=Depends(anonymous_required),
 ):
     """Reset the password for account associated with the given reset token."""
-    user = session.query(User).filter(User.reset_uuid == token).first()
+    stmt = select(User).where(User.reset_uuid == token)
+    user = session.execute(stmt).scalar_one_or_none()
     if user is None:
         raise NotFoundException(
             detail="Token not found. Please request a new password reset."

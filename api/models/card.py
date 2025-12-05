@@ -14,6 +14,8 @@ class DiceFlags(Enum):
     divine = 16
     sympathy = 32
     time = 64
+    artifice = 128
+    astral = 256
 
 
 CARD_TYPE_ORDER = [
@@ -106,7 +108,7 @@ class Card(db.AlchemyBase):
     @type_weight.expression
     def type_weight(cls):
         return db.case(
-            [
+            *[
                 (cls.card_type == value, index)
                 for index, value in enumerate(CARD_TYPE_ORDER)
             ],
