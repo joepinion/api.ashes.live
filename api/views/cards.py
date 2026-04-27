@@ -103,11 +103,12 @@ def list_cards(
         stmt = stmt.where(Card.is_legacy.is_(False))
     # Add a search term, if we're using one
     if q and q.strip():
-        stmt = stmt.where(
-            db.func.to_tsvector("english", Card.search_text).match(
-                to_prefixed_tsquery(q)
+        stmt = stmt.filter(
+            db.func.to_tsvector("english", Card.search_text).op("@@")(
+                db.func.to_tsquery("english", to_prefixed_tsquery(q))
             )
         )
+
     # Filter by particular card types
     if types:
         card_types = set()
@@ -357,7 +358,7 @@ def get_card_fuzzy_lookup(
     prefixed_query = to_prefixed_tsquery(q)
     stmt = stmt.where(
         db.or_(
-            search_vector.match(prefixed_query),
+            search_vector.op("@@")(db.func.to_tsquery("english", prefixed_query)),
             Card.stub.like(f"%{stub_search}%"),
         )
     )
